@@ -7,7 +7,8 @@ use legion_core::{
 pub fn into_system<'a, Q, F, R>(name: &'static str, system: F) -> Box<dyn Schedulable>
 where
     Q: IntoQuery + DefaultFilter<Filter = R>,
-    F: Fn(<<Q as View<'a>>::Iter as Iterator>::Item) + Send + Sync + 'static,
+    <Q as View<'a>>::Iter: Iterator<Item = Q> + 'a,
+    F: Fn(Q) + Send + Sync + 'static,
     R: EntityFilter + Sync + 'static,
 {
     SystemBuilder::new(name)
@@ -44,18 +45,12 @@ mod tests {
     fn test_system() {
         let mut world = World::new();
         let mut resources = Resources::default();
-        {
-            world.insert((), vec![(X(1), Y(1)), (X(2), Y(2))]);
-        }
-        // This works
-        let mut system = into_system::<(Ref<_>, RefMut<_>), _, _>("read_write", read_write_system);
-        system.run(&mut world, &mut resources);
-        
-        // This doesn't work
-        // let mut x = into_system("simple", read_system);
-        // x.run(&mut world, &mut resources);
+        world.insert((), vec![(X(1), Y(1)), (X(2), Y(2))]);
 
-        let mut x_read_system = into_system::<Ref<_>, _, _>("read", read_system);
-        x_read_system.run(&mut world, &mut resources);
+        let mut system = into_system("read_write", read_write_system);
+        system.run(&mut world, &mut resources);
+
+        let mut x = into_system("simple", read_system);
+        x.run(&mut world, &mut resources);
     }
 }
