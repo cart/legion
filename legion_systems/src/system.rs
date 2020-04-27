@@ -50,20 +50,20 @@ pub struct SystemAccess {
 // See https://github.com/rust-lang/rust/issues/62529
 
 #[derive(Clone)]
-enum QueryRef<V: for<'v> View<'v>, F: EntityFilter> {
-    Ptr(*const Query<V, F>),
-    Owned(Query<V, F>),
+enum QueryRef<'data, V: View<'data>, F: EntityFilter> {
+    Ptr(*const Query<'data, V, F>),
+    Owned(Query<'data, V, F>),
 }
 
-impl<V: for<'v> View<'v>, F: EntityFilter> QueryRef<V, F> {
-    unsafe fn get(&self) -> &Query<V, F> {
+impl<'data, V: View<'data>, F: EntityFilter> QueryRef<'data, V, F> {
+    unsafe fn get(&self) -> &Query<'data, V, F> {
         match self {
             QueryRef::Ptr(ptr) => &**ptr,
             QueryRef::Owned(query) => query,
         }
     }
 
-    unsafe fn into_owned_query(self) -> Query<V, F> {
+    unsafe fn into_owned_query(self) -> Query<'data, V, F> {
         match self {
             QueryRef::Ptr(ptr) => (*ptr).clone(),
             QueryRef::Owned(query) => query,
@@ -81,20 +81,21 @@ impl<V: for<'v> View<'v>, F: EntityFilter> QueryRef<V, F> {
 
 /// A query that is usable from within a system.
 #[derive(Clone)]
-pub struct SystemQuery<V, F>
+pub struct SystemQuery<'data, V, F>
 where
-    V: for<'v> View<'v>,
+    V: View<'data>,
     F: EntityFilter,
 {
-    query: QueryRef<V, F>,
+    query: QueryRef<'data, V, F>,
+    _marker: Option<&'data ()>,
 }
 
 // # Safety
 // `SystemQuery` does not auto-implement `Send` because it contains a `*const Query`.
 // It is safe to implement `Send` because no mutable state is shared between instances.
-unsafe impl<V, F> Send for SystemQuery<V, F>
+unsafe impl<'data, V, F> Send for SystemQuery<'data, V, F>
 where
-    V: for<'v> View<'v>,
+    V: View<'data>,
     F: EntityFilter,
 {
 }
@@ -102,22 +103,23 @@ where
 // # Safety
 // `SystemQuery` does not auto-implement `Sync` because it contains a `*const Query`.
 // It is safe to implement `Sync` because no internal mutation occurs behind a safe `&self`.
-unsafe impl<V, F> Sync for SystemQuery<V, F>
+unsafe impl<'data, V, F> Sync for SystemQuery<'data, V, F>
 where
-    V: for<'v> View<'v>,
+    V: View<'data>,
     F: EntityFilter,
 {
 }
 
-impl<V, F> SystemQuery<V, F>
+impl<'data, V, F> SystemQuery<'data, V, F>
 where
-    V: for<'v> View<'v>,
+    V: View<'data>,
     F: EntityFilter,
 {
     /// Safety: input references might not outlive a created instance of `SystemQuery`.
-    unsafe fn new(query: &Query<V, F>) -> Self {
+    unsafe fn new(query: &Query<'data, V, F>) -> Self {
         SystemQuery {
             query: QueryRef::Ptr(query as *const Query<V, F>),
+            _marker: None,
         }
     }
 
@@ -125,7 +127,7 @@ where
     pub fn filter<T: EntityFilter>(
         self,
         filter: T,
-    ) -> SystemQuery<V, <F as std::ops::BitAnd<T>>::Output>
+    ) -> SystemQuery<'data, V, <F as std::ops::BitAnd<T>>::Output>
     where
         F: std::ops::BitAnd<T>,
         <F as std::ops::BitAnd<T>>::Output: EntityFilter,
@@ -133,6 +135,7 @@ where
         let query = unsafe { self.query.into_owned_query() }.filter(filter);
         SystemQuery {
             query: QueryRef::Owned(query),
+            _marker: None,
         }
     }
 
@@ -152,7 +155,7 @@ where
     ///
     /// This function may panic if other code is concurrently accessing the same components.
     #[inline]
-    pub unsafe fn iter_chunks_unchecked<'a, 'data>(
+    pub unsafe fn iter_chunks_unchecked<'a>(
         &'a self,
         world: &'data SubWorld,
     ) -> ChunkViewIter<'data, 'a, V, F::ArchetypeFilter, F::ChunksetFilter, F::ChunkFilter> {
@@ -161,7 +164,7 @@ where
 
     /// Gets an iterator which iterates through all chunks that match the query.
     #[inline]
-    pub fn iter_chunks<'a, 'data>(
+    pub fn iter_chunks<'a>(
         &'a self,
         world: &'data SubWorld,
     ) -> ChunkViewIter<'data, 'a, V, F::ArchetypeFilter, F::ChunksetFilter, F::ChunkFilter>
@@ -174,7 +177,7 @@ where
 
     /// Gets an iterator which iterates through all chunks that match the query.
     #[inline]
-    pub fn iter_chunks_mut<'a, 'data>(
+    pub fn iter_chunks_mut<'a>(
         &'a self,
         world: &'data mut SubWorld,
     ) -> ChunkViewIter<'data, 'a, V, F::ArchetypeFilter, F::ChunksetFilter, F::ChunkFilter> {
@@ -193,7 +196,7 @@ where
     ///
     /// This function may panic if other code is concurrently accessing the same components.
     #[inline]
-    pub unsafe fn iter_entities_unchecked<'a, 'data>(
+    pub unsafe fn iter_entities_unchecked<'a>(
         &'a self,
         world: &'data SubWorld,
     ) -> ChunkEntityIter<
@@ -206,7 +209,7 @@ where
 
     /// Gets an iterator which iterates through all entity data that matches the query, and also yields the the `Entity` IDs.
     #[inline]
-    pub fn iter_entities<'a, 'data>(
+    pub fn iter_entities<'a>(
         &'a self,
         world: &'data SubWorld,
     ) -> ChunkEntityIter<
@@ -223,7 +226,7 @@ where
 
     /// Gets an iterator which iterates through all entity data that matches the query, and also yields the the `Entity` IDs.
     #[inline]
-    pub fn iter_entities_mut<'a, 'data>(
+    pub fn iter_entities_mut<'a>(
         &'a self,
         world: &'data mut SubWorld,
     ) -> ChunkEntityIter<
@@ -246,7 +249,7 @@ where
     ///
     /// This function may panic if other code is concurrently accessing the same components.
     #[inline]
-    pub unsafe fn iter_unchecked<'a, 'data>(
+    pub unsafe fn iter_unchecked<'a>(
         &'a self,
         world: &'data SubWorld,
     ) -> ChunkDataIter<
@@ -259,7 +262,7 @@ where
 
     /// Gets an iterator which iterates through all entity data that matches the query.
     #[inline]
-    pub fn iter<'a, 'data>(
+    pub fn iter<'a>(
         &'a self,
         world: &'data SubWorld,
     ) -> ChunkDataIter<
@@ -276,7 +279,7 @@ where
 
     /// Gets an iterator which iterates through all entity data that matches the query.
     #[inline]
-    pub fn iter_mut<'a, 'data>(
+    pub fn iter_mut<'a>(
         &'a self,
         world: &'data mut SubWorld,
     ) -> ChunkDataIter<
@@ -299,7 +302,7 @@ where
     ///
     /// This function may panic if other code is concurrently accessing the same components.
     #[inline]
-    pub unsafe fn for_each_unchecked<'a, 'data, T>(&'a self, world: &SubWorld, f: T)
+    pub unsafe fn for_each_unchecked<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
         T: Fn(<<V as View<'data>>::Iter as Iterator>::Item),
     {
@@ -308,7 +311,7 @@ where
 
     /// Iterates through all entity data that matches the query.
     #[inline]
-    pub fn for_each<'a, 'data, T>(&'a self, world: &SubWorld, f: T)
+    pub fn for_each<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
         T: Fn(<<V as View<'data>>::Iter as Iterator>::Item),
         V: ReadOnly,
@@ -319,7 +322,7 @@ where
 
     /// Iterates through all entity data that matches the query.
     #[inline]
-    pub fn for_each_mut<'a, 'data, T>(&'a self, world: &mut SubWorld, f: T)
+    pub fn for_each_mut<'a, T>(&'a self, world: &'data mut SubWorld, f: T)
     where
         T: Fn(<<V as View<'data>>::Iter as Iterator>::Item),
     {
@@ -339,7 +342,7 @@ where
     /// This function may panic if other code is concurrently accessing the same components.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub unsafe fn for_each_entities_unchecked<'a, 'data, T>(&'a self, world: &SubWorld, f: T)
+    pub unsafe fn for_each_entities_unchecked<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
         T: Fn((Entity, <<V as View<'data>>::Iter as Iterator>::Item)),
     {
@@ -351,7 +354,7 @@ where
     /// Iterates through all entity data that matches the query.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub fn for_each_entities<'a, 'data, T>(&'a self, world: &SubWorld, f: T)
+    pub fn for_each_entities<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
         T: Fn((Entity, <<V as View<'data>>::Iter as Iterator>::Item)),
         V: ReadOnly,
@@ -363,7 +366,7 @@ where
     /// Iterates through all entity data that matches the query.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub fn for_each_entities_mut<'a, 'data, T>(&'a self, world: &mut SubWorld, f: T)
+    pub fn for_each_entities_mut<'a, T>(&'a self, world: &'data mut SubWorld, f: T)
     where
         T: Fn((Entity, <<V as View<'data>>::Iter as Iterator>::Item)),
     {
@@ -383,12 +386,12 @@ where
     /// This function may panic if other code is concurrently accessing the same components.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub unsafe fn par_entities_for_each_unchecked<'a, T>(&'a self, world: &SubWorld, f: T)
+    pub unsafe fn par_entities_for_each_unchecked<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
-        T: Fn((Entity, <<V as View<'a>>::Iter as Iterator>::Item)) + Send + Sync,
-        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunksetFilter as Filter<ChunksetFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunkFilter as Filter<ChunkFilterData<'a>>>::Iter: FissileIterator,
+        T: Fn((Entity, <<V as View<'data>>::Iter as Iterator>::Item)) + Send + Sync,
+        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunksetFilter as Filter<ChunksetFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunkFilter as Filter<ChunkFilterData<'data>>>::Iter: FissileIterator,
     {
         self.query
             .get()
@@ -398,12 +401,12 @@ where
     /// Iterates through all entities that matches the query in parallel by chunk.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub fn par_entities_for_each<'a, T>(&'a self, world: &SubWorld, f: T)
+    pub fn par_entities_for_each<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
-        T: Fn((Entity, <<V as View<'a>>::Iter as Iterator>::Item)) + Send + Sync,
-        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunksetFilter as Filter<ChunksetFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunkFilter as Filter<ChunkFilterData<'a>>>::Iter: FissileIterator,
+        T: Fn((Entity, <<V as View<'data>>::Iter as Iterator>::Item)) + Send + Sync,
+        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunksetFilter as Filter<ChunksetFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunkFilter as Filter<ChunkFilterData<'data>>>::Iter: FissileIterator,
         V: ReadOnly,
     {
         // safe because the view can only read data immutably
@@ -413,12 +416,12 @@ where
     /// Iterates through all entities that matches the query in parallel by chunk.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub fn par_entities_for_each_mut<'a, T>(&'a self, world: &mut SubWorld, f: T)
+    pub fn par_entities_for_each_mut<'a, T>(&'a self, world: &'data mut SubWorld, f: T)
     where
-        T: Fn((Entity, <<V as View<'a>>::Iter as Iterator>::Item)) + Send + Sync,
-        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunksetFilter as Filter<ChunksetFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunkFilter as Filter<ChunkFilterData<'a>>>::Iter: FissileIterator,
+        T: Fn((Entity, <<V as View<'data>>::Iter as Iterator>::Item)) + Send + Sync,
+        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunksetFilter as Filter<ChunksetFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunkFilter as Filter<ChunkFilterData<'data>>>::Iter: FissileIterator,
     {
         // safe because the &mut SubWorld ensures exclusivity
         unsafe { self.par_entities_for_each_unchecked(world, f) }
@@ -436,12 +439,12 @@ where
     /// This function may panic if other code is concurrently accessing the same components.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub unsafe fn par_for_each_unchecked<'a, T>(&'a self, world: &SubWorld, f: T)
+    pub unsafe fn par_for_each_unchecked<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
-        T: Fn(<<V as View<'a>>::Iter as Iterator>::Item) + Send + Sync,
-        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunksetFilter as Filter<ChunksetFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunkFilter as Filter<ChunkFilterData<'a>>>::Iter: FissileIterator,
+        T: Fn(<<V as View<'data>>::Iter as Iterator>::Item) + Send + Sync,
+        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunksetFilter as Filter<ChunksetFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunkFilter as Filter<ChunkFilterData<'data>>>::Iter: FissileIterator,
     {
         self.query.get().par_for_each_unchecked(&*world.world, f)
     }
@@ -449,12 +452,12 @@ where
     /// Iterates through all entity data that matches the query in parallel.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub fn par_for_each<'a, T>(&'a self, world: &SubWorld, f: T)
+    pub fn par_for_each<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
-        T: Fn(<<V as View<'a>>::Iter as Iterator>::Item) + Send + Sync,
-        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunksetFilter as Filter<ChunksetFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunkFilter as Filter<ChunkFilterData<'a>>>::Iter: FissileIterator,
+        T: Fn(<<V as View<'data>>::Iter as Iterator>::Item) + Send + Sync,
+        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunksetFilter as Filter<ChunksetFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunkFilter as Filter<ChunkFilterData<'data>>>::Iter: FissileIterator,
         V: ReadOnly,
     {
         // safe because the view can only read data immutably
@@ -464,12 +467,12 @@ where
     /// Iterates through all entity data that matches the query in parallel.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub fn par_for_each_mut<'a, T>(&'a self, world: &mut SubWorld, f: T)
+    pub fn par_for_each_mut<'a, T>(&'a self, world: &'data mut SubWorld, f: T)
     where
-        T: Fn(<<V as View<'a>>::Iter as Iterator>::Item) + Send + Sync,
-        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunksetFilter as Filter<ChunksetFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunkFilter as Filter<ChunkFilterData<'a>>>::Iter: FissileIterator,
+        T: Fn(<<V as View<'data>>::Iter as Iterator>::Item) + Send + Sync,
+        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunksetFilter as Filter<ChunksetFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunkFilter as Filter<ChunkFilterData<'data>>>::Iter: FissileIterator,
     {
         // safe because the &mut SubWorld ensures exclusivity
         unsafe { self.par_for_each_unchecked(world, f) }
@@ -487,12 +490,12 @@ where
     /// This function may panic if other code is concurrently accessing the same components.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub unsafe fn par_for_each_chunk_unchecked<'a, T>(&'a self, world: &SubWorld, f: T)
+    pub unsafe fn par_for_each_chunk_unchecked<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
-        T: Fn(Chunk<'a, V>) + Send + Sync,
-        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunksetFilter as Filter<ChunksetFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunkFilter as Filter<ChunkFilterData<'a>>>::Iter: FissileIterator,
+        T: Fn(Chunk<'data, V>) + Send + Sync,
+        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunksetFilter as Filter<ChunksetFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunkFilter as Filter<ChunkFilterData<'data>>>::Iter: FissileIterator,
     {
         self.query
             .get()
@@ -502,12 +505,12 @@ where
     /// Gets a parallel iterator of chunks that match the query.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub fn par_for_each_chunk<'a, T>(&'a self, world: &SubWorld, f: T)
+    pub fn par_for_each_chunk<'a, T>(&'a self, world: &'data SubWorld, f: T)
     where
-        T: Fn(Chunk<'a, V>) + Send + Sync,
-        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunksetFilter as Filter<ChunksetFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunkFilter as Filter<ChunkFilterData<'a>>>::Iter: FissileIterator,
+        T: Fn(Chunk<'data, V>) + Send + Sync,
+        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunksetFilter as Filter<ChunksetFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunkFilter as Filter<ChunkFilterData<'data>>>::Iter: FissileIterator,
         V: ReadOnly,
     {
         // safe because the view can only read data immutably
@@ -517,12 +520,12 @@ where
     /// Gets a parallel iterator of chunks that match the query.
     #[cfg(feature = "par-iter")]
     #[inline]
-    pub fn par_for_each_chunk_mut<'a, T>(&'a self, world: &mut SubWorld, f: T)
+    pub fn par_for_each_chunk_mut<'a, T>(&'a self, world: &'data mut SubWorld, f: T)
     where
-        T: Fn(Chunk<'a, V>) + Send + Sync,
-        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunksetFilter as Filter<ChunksetFilterData<'a>>>::Iter: FissileIterator,
-        <F::ChunkFilter as Filter<ChunkFilterData<'a>>>::Iter: FissileIterator,
+        T: Fn(Chunk<'data, V>) + Send + Sync,
+        <F::ArchetypeFilter as Filter<ArchetypeFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunksetFilter as Filter<ChunksetFilterData<'data>>>::Iter: FissileIterator,
+        <F::ChunkFilter as Filter<ChunkFilterData<'data>>>::Iter: FissileIterator,
     {
         // safe because the &mut SubWorld ensures exclusivity
         unsafe { self.par_for_each_chunk_unchecked(world, f) }
@@ -532,7 +535,7 @@ where
 /// This trait is for providing abstraction across tuples of queries for populating the type
 /// information in the system closure. This trait also provides access to the underlying query
 /// information.
-pub trait QuerySet: Send + Sync {
+pub trait QuerySet<'data>: Send + Sync {
     type Queries;
 
     /// Returns the archetypes accessed by this collection of queries. This allows for caching
@@ -549,12 +552,12 @@ macro_rules! impl_queryset_tuple {
     ($($ty: ident),*) => {
         paste::item! {
             #[allow(unused_parens, non_snake_case)]
-            impl<$([<$ty V>], [<$ty F>], )*> QuerySet for ($(Query<[<$ty V>], [<$ty F>]>, )*)
+            impl<'data, $([<$ty V>], [<$ty F>], )*> QuerySet<'data> for ($(Query<'data, [<$ty V>], [<$ty F>]>, )*)
             where
-                $([<$ty V>]: for<'v> View<'v>,)*
+                $([<$ty V>]: View<'data>,)*
                 $([<$ty F>]: EntityFilter + Send + Sync,)*
             {
-                type Queries = ( $(SystemQuery<[<$ty V>], [<$ty F>]>, )*  );
+                type Queries = ( $(SystemQuery<'data, [<$ty V>], [<$ty F>]>, )*  );
                 fn filter_archetypes(&mut self, world: &World, bitset: &mut BitSet) {
                     let ($($ty,)*) = self;
 
@@ -565,25 +568,25 @@ macro_rules! impl_queryset_tuple {
                 }
                 unsafe fn prepare(&mut self) -> Self::Queries {
                     let ($($ty,)*) = self;
-                    ($(SystemQuery::<[<$ty V>], [<$ty F>]>::new($ty),)*)
+                    ($(SystemQuery::<'data, [<$ty V>], [<$ty F>]>::new($ty),)*)
                 }
             }
         }
     };
 }
 
-impl QuerySet for () {
+impl<'data> QuerySet<'data> for () {
     type Queries = ();
     fn filter_archetypes(&mut self, _: &World, _: &mut BitSet) {}
     unsafe fn prepare(&mut self) {}
 }
 
-impl<AV, AF> QuerySet for Query<AV, AF>
+impl<'data, AV, AF> QuerySet<'data> for Query<'data, AV, AF>
 where
-    AV: for<'v> View<'v>,
+    AV: View<'data>,
     AF: EntityFilter + Send + Sync,
 {
-    type Queries = SystemQuery<AV, AF>;
+    type Queries = SystemQuery<'data, AV, AF>;
     fn filter_archetypes(&mut self, world: &World, bitset: &mut BitSet) {
         let storage = world.storage();
         self.filter
@@ -798,13 +801,13 @@ impl<T: Into<Cow<'static, str>>> From<T> for SystemId {
 ///
 /// Queries are stored generically within this struct, and the `SystemQuery` types are generated
 /// on each `run` call, wrapping the world and providing the set to the user in their closure.
-pub struct System<R, Q, F>
+pub struct System<'data, R, Q, F>
 where
     R: ResourceSet,
-    Q: QuerySet,
+    Q: QuerySet<'data>,
     F: SystemFn<
         Resources = <R as ResourceSet>::PreparedResources,
-        Queries = <Q as QuerySet>::Queries,
+        Queries = <Q as QuerySet<'data>>::Queries,
     >,
 {
     name: SystemId,
@@ -819,15 +822,16 @@ where
 
     // We pre-allocate a command buffer for ourself. Writes are self-draining so we never have to rellocate.
     command_buffer: FxHashMap<WorldId, AtomicRefCell<CommandBuffer>>,
+    _marker: Option<&'data ()>,
 }
 
-impl<R, Q, F> Runnable for System<R, Q, F>
+impl<'data, R, Q, F> Runnable for System<'data, R, Q, F>
 where
     R: ResourceSet,
-    Q: QuerySet,
+    Q: QuerySet<'data>,
     F: SystemFn<
         Resources = <R as ResourceSet>::PreparedResources,
-        Queries = <Q as QuerySet>::Queries,
+        Queries = <Q as QuerySet<'data>>::Queries,
     >,
 {
     fn name(&self) -> &SystemId { &self.name }
@@ -981,7 +985,7 @@ impl SystemBuilder<(), ()> {
     }
 }
 
-impl<Q, R> SystemBuilder<Q, R>
+impl<'data, Q, R> SystemBuilder<Q, R>
 where
     Q: 'static + Send + ConsFlatten,
     R: 'static + Send + ConsFlatten,
@@ -993,12 +997,12 @@ where
     /// These queries are then provided to the executing closure as a tuple of queries.
     pub fn with_query<V, F>(
         mut self,
-        query: Query<V, F>,
+        query: Query<'data, V, F>,
     ) -> SystemBuilder<<Q as ConsAppend<Query<V, F>>>::Output, R>
     where
-        V: for<'a> View<'a>,
+        V: View<'data>,
         F: 'static + EntityFilter,
-        Q: ConsAppend<Query<V, F>>,
+        Q: ConsAppend<Query<'data, V, F>>,
     {
         self.component_access.reads.extend(V::read_types().iter());
         self.component_access.writes.extend(V::write_types().iter());
@@ -1107,9 +1111,9 @@ where
     pub fn build<F>(self, run_fn: F) -> Box<dyn Schedulable>
     where
         <R as ConsFlatten>::Output: ResourceSet + Send + Sync,
-        <Q as ConsFlatten>::Output: QuerySet,
+        <Q as ConsFlatten>::Output: QuerySet<'data>,
         <<R as ConsFlatten>::Output as ResourceSet>::PreparedResources: Send + Sync,
-        <<Q as ConsFlatten>::Output as QuerySet>::Queries: Send + Sync,
+        <<Q as ConsFlatten>::Output as QuerySet<'data>>::Queries: Send + Sync,
         F: FnMut(
                 &mut CommandBuffer,
                 &mut SubWorld,
@@ -1136,6 +1140,7 @@ where
                 tags: Access::default(),
             },
             command_buffer: FxHashMap::default(),
+            _marker: None,
         })
     }
 
@@ -1146,7 +1151,7 @@ where
     pub fn build_thread_local<F>(self, run_fn: F) -> Box<dyn Runnable>
     where
         <R as ConsFlatten>::Output: ResourceSet + Send + Sync,
-        <Q as ConsFlatten>::Output: QuerySet,
+        <Q as ConsFlatten>::Output: QuerySet<'data>,
         F: FnMut(
                 &mut CommandBuffer,
                 &mut SubWorld,
@@ -1171,6 +1176,7 @@ where
                 tags: Access::default(),
             },
             command_buffer: FxHashMap::default(),
+            _marker: None,
         })
     }
 }

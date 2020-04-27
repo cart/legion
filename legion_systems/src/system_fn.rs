@@ -4,9 +4,9 @@ use legion_core::{
     query::{DefaultFilter, IntoQuery, View},
 };
 
-pub fn into_system<'a, Q, F, R>(name: &'static str, system: F) -> Box<dyn Schedulable>
+pub fn into_system<'a,Q, F, R>(name: &'static str, system: F) -> Box<dyn Schedulable>
 where
-    Q: IntoQuery + DefaultFilter<Filter = R>,
+    Q: IntoQuery<'a> + DefaultFilter<Filter = R>,
     <Q as View<'a>>::Iter: Iterator<Item = Q> + 'a,
     F: Fn(Q) + Send + Sync + 'static,
     R: EntityFilter + Sync + 'static,
